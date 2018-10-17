@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/types.h>
 
 #define ERROR 1
 #define PROTOCOL "tcp"
@@ -242,12 +243,11 @@ int main(int argc, char *argv[]){
 					i++;
 					if(argv[i] != NULL && argv[i][0] != '-'){
 						root = argv[i];
-                        /*
-                        char* full_root = malloc(sizeof(root+2));
+                        int root_size = strlen("//")+strlen(root);
+                        char full_root[root_size];
                         sprintf(full_root, "//%s", root);
                         if(opendir(full_root) == NULL)
                             errexit("Error: invalid directory or directory does not exist", NULL);
-                            */
                     }
 					else{
 						errexit("ERROR: Enter a directory following the -d flag", NULL);
@@ -324,24 +324,31 @@ int main(int argc, char *argv[]){
             valid_request = false;
         }
         else{
+            printf("%s %d\n", request, request_length);
+            fflush(stdout);
             request[request_length] = '\0';
             char* request_array[REQUEST_ARRAY_LEN];
-            char* token = malloc(sizeof(request));
-            int token_len = sizeof(token);
+            char* token = malloc(request_length);
             int array_index = 0;
             int request_index = 0;
+           
             while(request[i] != '\r' && array_index < REQUEST_ARRAY_LEN && request_index < request_length){
                 int token_index = 0;
-                while(request[request_index] != '\r' && request[request_index] != ' '&& request_index<request_length){
+                 printf("here");
+                 fflush(stdout);
+                while(request[request_index] != '\r' && request[request_index] != ' ' && request_index<request_length){
                     token[token_index] = request[request_index];
                     request_index++;
                     token_index++;
                 }
-                token[token_index] = '\0';
-                request_array[array_index] = malloc(sizeof(token));
-                sprintf(request_array[array_index], "%s", token);
-                bzero(token, token_len);
-                array_index++;
+                if(token_index>0){
+                    token[token_index] = '\0';
+                    printf("%d %s\n",array_index, token);
+                    fflush(stdout);
+                    sprintf(request_array[array_index], "%s", token);
+                    bzero(token, request_length);
+                    array_index++;
+                }
                 request_index++;
             }
             if(array_index != REQUEST_ARRAY_LEN)
@@ -352,6 +359,9 @@ int main(int argc, char *argv[]){
             filename = (char*) request_array[FILE_POS];
             client_token = (char*) request_array[FILE_POS];
             version = (char*) request_array[VERSION_POS];
+            
+            printf("%s\n", version);
+            fflush(stdout);
             
             //Checking for "HTTP/" for version
             if(strncasecmp(version, HTTP_START, strlen(HTTP_START)) != 0){
