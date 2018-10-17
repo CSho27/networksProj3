@@ -194,18 +194,12 @@ int fileToSocket(int sd, char* filename){
     unsigned char buffer[BUFLEN];
     bzero(buffer, BUFLEN);
     int total = 0;
-    int i=1;
-    while(i>0){
+    int current = 1;
+    while(current>0){
+        current = 0;
         bzero(buffer, BUFLEN);
-        i=0;
-        int current = fgetc(file);
-        while(i<BUFLEN-1 && current > 0){
-            buffer[i] = (unsigned char) current;
-            current = fgetc(file);
-            i++;
-        }
-        total += i;
-        if (write (sd, buffer, i) < 0)
+        current = fread(buffer, 1, BUFLEN, file);
+        if (write (sd, buffer, BUFLEN) < 0)
             return -1;
     }
     if(close(sd)<0)
