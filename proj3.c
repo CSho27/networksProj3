@@ -56,6 +56,7 @@ int getPortFromString(char *port_string){
 		return -1;
 }
 
+//Does the socket setup steps and returns a socket descriptor
 int setupSocket(int port){
 	struct sockaddr_in sin;
     struct protoent *protoinfo;
@@ -88,6 +89,7 @@ int setupSocket(int port){
 	return sd;
 }
 
+//Does the accepting and connection to the client and returns another socket descriptor
 int setupConnection(int sd){
     struct sockaddr addr;
 	
@@ -99,6 +101,7 @@ int setupConnection(int sd){
 	return socket_connection;
 }
 
+//Reads first line from socket and checks rest for validity. Returns "invalid" if malformed
 char* readRequestFromSocket(int sd){
 	char buffer [BUFLEN];
 	bzero(buffer, BUFLEN);
@@ -135,11 +138,9 @@ char* readRequestFromSocket(int sd){
 	return return_value;
 }
 
-void writeResponseToSocket(int sd, int code, char* file){
-	bool file_present = false;
-	if(file != NULL)
-		file_present = true;
-	
+//Takes a code and an optional char* for a file and writes the response to the socket
+//Is NOT to be used for responses that include files
+void writeResponseToSocket(int sd, int code){
 	char* response;
 	switch(code){
 		case 400:
@@ -161,22 +162,44 @@ void writeResponseToSocket(int sd, int code, char* file){
 			response =  "HTTP/1.1 404 File Not Found\r\n\r\n";
 			break;
 		case 200:
-			if(file_present){
-				//file included in contents
-			}
-			else{
-				response =  "HTTP/1.1 200 Server Shutting Down\r\n\r\n";
-			}
+			response =  "HTTP/1.1 200 Server Shutting Down\r\n\r\n";
 			break;
 		default:
 			errexit("ERROR: Invalid Response Code Used", NULL);
 			break;
 	}
 	if (write (sd, response, strlen (response)) < 0){
-       	 	errexit ("error writing message: %s", NULL); 
-		}
+        errexit ("error writing message: %s", NULL);
+    if(close (sd)<0)
+        errexit("ERROR: Error closing socket", NULL);
+    }
 }	
- 
+
+int fileToSocket(int sd, char* filename){
+    FILE* file = fopen(filename, "r");
+    if(file == NULL)
+        return -1;
+    
+    char* response =  "HTTP/1.1 200 OK\r\n\r\n";
+    
+    if (write (sd, response, strlen (response)) < 0){
+       	 	errexit ("error writing message: %s", NULL); 
+    }
+    char buffer[BUFLEN];
+    bzero(buffer, BUFLEN);
+    
+    while(fgets(buffer, BUFLEN, file)){
+        printf("buf:%s", buffer);
+        fflush(stdout);
+        if (write (sd, buffer, BUFLEN < 0)){
+       	 	errexit ("error writing message: %s", NULL); 
+        }
+        bzero(buffer, BUFLEN);
+    }
+    fclose(file);
+    return 0;
+}
+
 
 int main(int argc, char *argv[]){
 	//booleans to record which flags are present
@@ -185,8 +208,8 @@ int main(int argc, char *argv[]){
 	bool auth_token_present = false;		//-a is present and is followed by an auth token
 	
 	//Strings for output file location and url
-	char *directory = "";
-	char *auth_token;
+	char *root = "";
+	char *server_token;
 	
 	int port = 0;
 	
@@ -204,7 +227,7 @@ int main(int argc, char *argv[]){
 				case 'd':
 					i++;
 					if(argv[i] != NULL && argv[i][0] != '-')
-						directory = argv[i];
+						root = argv[i];
 					else
 						errexit("ERROR: Enter a directory following the -d flag", NULL);
 					directory_present = true;
@@ -212,7 +235,7 @@ int main(int argc, char *argv[]){
 				case 'a':
 					i++;
 					if(argv[i] != NULL && argv[i][0] != '-')
-						auth_token = argv[i];
+						server_token = argv[i];
 					else
 						errexit("ERROR: Enter an auth token following the -a flag", NULL);
 					auth_token_present = true;
@@ -221,6 +244,7 @@ int main(int argc, char *argv[]){
 					errexit("ERROR: Invalid flag. Valid flags are -p, -d, and -a", NULL);
 					break;
 			}
+            
 		}
         else{
             errexit("ERROR: Either no flags were entered or an invalid argument was passed.", NULL);
@@ -234,9 +258,8 @@ int main(int argc, char *argv[]){
 		printf("ERROR: -p flag and port # must be included\n");
 	if(!(port_present && directory_present && auth_token_present))
 		errexit("ERROR: requird flags and fields were not entered" , NULL);
-	
-	printf("%d\n%d\n%d\n%d\n", port_present, directory_present, auth_token_present, port);
-	printf("%s\n%s\n", directory, auth_token);
+    
+	printf("%s\n", server_token);
 	fflush(stdout);
 	
 	//Now that local stuff has been processed, set up to receive and interpret request
@@ -246,76 +269,114 @@ int main(int argc, char *argv[]){
 	bool malformed = false;
 	bool unimplemented_protocol = false;
 	bool unsupported_method = false;
+    
+    //booleans for method type
+    bool get = false;
+    bool quit = false;
 	
 	int socket_server = setupSocket(port);
-	int socket_connection = setupConnection(socket_server);
-	
-	char* request = readRequestFromSocket(socket_connection);
-    if(strcmp(request, "invalid") == 0){
-		malformed = true;
-		valid_request = false;
-	}
-	else{
-		char* request_array[REQUEST_ARRAY_LEN];
-		char* token = strtok(request, " ");
-		i = 0;
+    
+    bool done = false;
+    
+    while(!done){
+	    int socket_connection = setupConnection(socket_server);
+        
+        char* request = readRequestFromSocket(socket_connection);
 
-		while (token[0] != '\r' && token !=NULL && i<3){
-		   request_array[i] = token;
-		   token = strtok(NULL, " ");
-		   i++;
-		}
-		if(i!=3){
-			malformed = true;
-			valid_request = false;
-		}
+        char* method;
+        char* filename;
+        char* client_token;
+        char* version;
+        if(strcmp(request, "invalid") == 0){
+            malformed = true;
+            valid_request = false;
+        }
+        else{
+            char* request_array[REQUEST_ARRAY_LEN];
+            char* token = strtok(request, " ");
+            i = 0;
 
-	
-		char* method = request_array[METHOD_POS];
-		char* filename = request_array[FILE_POS];
-		char* version = request_array[VERSION_POS];
+            while (token[0] != '\r' && token !=NULL && i<3){
+               request_array[i] = token;
+               token = strtok(NULL, " ");
+               i++;
+            }
+            if(i!=3){
+                malformed = true;
+                valid_request = false;
+            }
 
-		if(strncasecmp(version, HTTP_START, strlen(HTTP_START)) != 0){
-			valid_request = false;
-			unimplemented_protocol = true;
-		}
-	
-		if(strcmp("GET", method) == 0){
-			writeResponseToSocket(socket_connection, 200, NULL);
-		}
-		else{
-			if(strcmp("QUIT", method) == 0){
-				writeResponseToSocket(socket_connection, 200, NULL);
-			}
-			else{
-				valid_request = false;
-				unsupported_method = true;
-			}
-		}
-		printf("%s\n", filename);
-		fflush(stdout);
-	}
-	
-	if(malformed){
-		writeResponseToSocket(socket_connection, 400, NULL);
-	}
-	else{
-		if(unimplemented_protocol){
-			writeResponseToSocket(socket_connection, 501, NULL);
-		}
-		else{
-			if(unsupported_method){
-				writeResponseToSocket(socket_connection, 405, NULL);
-			}
-		}
-	}
-			
-	printf("Valid:%d\nMalformed:%d,\nUnimplemented:%d\nUnsupported:%d\n", valid_request, malformed, unimplemented_protocol, unsupported_method);
-	fflush(stdout);
-	
+            method = request_array[METHOD_POS];
+            filename = request_array[FILE_POS];
+            client_token = request_array[FILE_POS];
+            version = request_array[VERSION_POS];
+
+            if(strncasecmp(version, HTTP_START, strlen(HTTP_START)) != 0){
+                valid_request = false;
+                unimplemented_protocol = true;
+            }
+
+            if(strcmp("GET", method) == 0){
+                get = true;
+            }
+            else{
+                if(strcmp("QUIT", method) == 0){
+                    quit = true;
+                }
+                else{
+                    valid_request = false;
+                    unsupported_method = true;
+                }
+            }
+        }
+
+        if(malformed){
+            writeResponseToSocket(socket_connection, 400);
+        }
+        else{
+            if(unimplemented_protocol){
+                writeResponseToSocket(socket_connection, 501);
+            }
+            else{
+                if(unsupported_method){
+                    writeResponseToSocket(socket_connection, 405);
+                }
+            }
+        }
+
+        if(valid_request){
+            if(get){
+                char full_path[strlen(filename)+strlen(root)];
+                if(filename[0] != '/'){
+                    writeResponseToSocket(socket_connection, 406);
+                }
+                else{
+                    if(strcmp(filename, "/") == 0)
+                        sprintf(full_path, "//%s/default.html", root);
+                    else
+                        sprintf(full_path, "//%s%s", root, filename);
+                    printf("%s\n", full_path);
+                    fflush(stdout);
+                    if(fileToSocket(socket_connection, full_path)<0)
+                        writeResponseToSocket(socket_connection, 404);
+                }
+            }
+            else{
+                if(quit){
+                    if(strcmp(server_token, client_token)==0){
+                        writeResponseToSocket(socket_connection, 200);
+                        printf("Client Auth Successful, Server Shutting Down...\n");
+                        fflush(stdout);
+                        exit(0);
+                    }
+                    else{
+                        writeResponseToSocket(socket_connection, 403);
+                    }
+                }
+            }
+        }
+    }
     /* close & exit */
-	if(close (socket_connection)<0)
-		errexit("ERROR: Error closing socket", NULL);
     if(close (socket_server)<0)
 		errexit("ERROR: Error closing socket", NULL);
 }
