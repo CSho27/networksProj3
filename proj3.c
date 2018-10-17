@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #define ERROR 1
 #define PROTOCOL "tcp"
@@ -65,6 +66,7 @@ int setupSocket(int port){
     if ((protoinfo = getprotobyname (PROTOCOL)) == NULL)
         errexit ("cannot find protocol information for %s", PROTOCOL);
 	
+	//0 out memory
     memset ((char *)&sin,0x0,sizeof (sin));
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = INADDR_ANY;
@@ -85,14 +87,12 @@ int setupSocket(int port){
     if(listen (sd, QLEN) < 0){
     	errexit ("cannot listen on port", NULL);
 	}
-	
 	return sd;
 }
 
-//Does the accepting and connection to the client and returns another socket descriptor
+//Does the accepting and connection to the client and returns another socket descriptor, this one is the actual connection to the client
 int setupConnection(int sd){
     struct sockaddr addr;
-	
 	socklen_t addrlen = sizeof(addr); // Address struct length
 	int socket_connection = accept (sd,&addr,&addrlen);
     if (socket_connection < 0){
@@ -109,9 +109,12 @@ char* readRequestFromSocket(int sd){
     if (ret < 0){
         errexit ("reading error",NULL);
 	}
+	
+	//Checking to make sure the request has a valid end
 	if(strstr(buffer, "\r\n\r\n") == NULL)
 		return "invalid";
 	
+	//Reading it in by line to check format. However, it only returna first line
 	char line[sizeof(buffer)];
 	char* return_value = malloc(ret);
 	int buffer_index = 0;
@@ -120,12 +123,12 @@ char* readRequestFromSocket(int sd){
 	while(buffer_index < ret){
 		bzero(line, sizeof(line));
 		int character_index = 0;
-		while(buffer[buffer_index] != '\n' && buffer_index < ret){
+		while(buffer[buffer_index] != '\n' && buffer[buffer_index] != '\r' && buffer_index < ret){
 			line[character_index] = buffer[buffer_index];
 			buffer_index++;
 			character_index++;
 		}
-		if(buffer[buffer_index] == '\n' && buffer[buffer_index-1] != '\r'){
+		if((buffer[buffer_index] == '\n' && buffer[buffer_index-1] != '\r') || (buffer[buffer_index] == '\r' && buffer[buffer_index+1] != '\n')){
 			return "invalid";
 		}
 		line[character_index] = '\0';
@@ -140,7 +143,7 @@ char* readRequestFromSocket(int sd){
 
 //Takes a code and an optional char* for a file and writes the response to the socket
 //Is NOT to be used for responses that include files
-void writeResponseToSocket(int sd, int code){
+int writeResponseToSocket(int sd, int code){
 	char* response;
 	switch(code){
 		case 400:
@@ -168,23 +171,25 @@ void writeResponseToSocket(int sd, int code){
 			errexit("ERROR: Invalid Response Code Used", NULL);
 			break;
 	}
-	if (write (sd, response, strlen (response)) < 0){
-        errexit ("error writing message: %s", NULL);
+	if (write (sd, response, strlen (response)) < 0)
+        return -1;
     if(close (sd)<0)
-        errexit("ERROR: Error closing socket", NULL);
-    }
+        return -1;
+    else
+        return 0;
 }	
 
+//This one writes a response followed by content to the socket
 int fileToSocket(int sd, char* filename){
     FILE* file = fopen(filename, "r");
     if(file == NULL)
         return -1;
     
+    //Unless there's an unforseen failure this is the response
     char* response =  "HTTP/1.1 200 OK\r\n\r\n";
     int size = strlen(response);
-    if (write (sd, response, size) < 0){
-       	 	errexit ("error writing response", NULL); 
-    }
+    if (write (sd, response, size) < 0)
+       	 	return -1; 
     unsigned char buffer[BUFLEN];
     bzero(buffer, BUFLEN);
     int total = 0;
@@ -199,18 +204,17 @@ int fileToSocket(int sd, char* filename){
             i++;
         }
         total += i;
-        if (write (sd, buffer, i) < 0){
-            errexit ("error writing content", NULL); 
-        }
+        if (write (sd, buffer, i) < 0)
+            return -1;
     }
-    if(close(sd)<0){
-        errexit("ERROR: Error closing socket", NULL);
-    }
-    fclose(file);
+    if(close(sd)<0)
+        return -1;
+    if(fclose(file)<0)
+        errexit("Error closing file", NULL);
     return total;
 }
 
-
+//Here is the main method. Processes the command and sets up the server
 int main(int argc, char *argv[]){
 	//booleans to record which flags are present
     bool port_present = false;        //-p is present, and is followed by a port number
@@ -236,10 +240,18 @@ int main(int argc, char *argv[]){
 					break;
 				case 'd':
 					i++;
-					if(argv[i] != NULL && argv[i][0] != '-')
+					if(argv[i] != NULL && argv[i][0] != '-'){
 						root = argv[i];
-					else
+                        /*
+                        char* full_root = malloc(sizeof(root+2));
+                        sprintf(full_root, "//%s", root);
+                        if(opendir(full_root) == NULL)
+                            errexit("Error: invalid directory or directory does not exist", NULL);
+                            */
+                    }
+					else{
 						errexit("ERROR: Enter a directory following the -d flag", NULL);
+                    }
 					directory_present = true;
 					break;
 				case 'a':
@@ -277,23 +289,32 @@ int main(int argc, char *argv[]){
 	bool unimplemented_protocol = false;
 	bool unsupported_method = false;
     
-    //booleans for method type
+    //booleans for method type and loop
     bool get = false;
     bool quit = false;
-	
-	int socket_server = setupSocket(port);
-    
     bool done = false;
-    
-    while(!done){
+	
+	//Setup socket to be connected to
+	int socket_server = setupSocket(port);
+	
+	//Loops through until the quit command is correctly called
+	while(!done){
         //reset booleans
+        valid_request = true;
+	    malformed = false;
+	    unimplemented_protocol = false;
+	    unsupported_method = false;
         get = false;
         quit = false;
         
+        //Accept actual connection
 	    int socket_connection = setupConnection(socket_server);
         
+        //Read the request header from the socket
         char* request = readRequestFromSocket(socket_connection);
-
+        int request_length = strlen(request);
+        
+		//setting strings for required fields
         char* method;
         char* filename;
         char* client_token;
@@ -303,16 +324,15 @@ int main(int argc, char *argv[]){
             valid_request = false;
         }
         else{
-            printf("%s\n", request);
-            fflush(stdout);
+            request[request_length] = '\0';
             char* request_array[REQUEST_ARRAY_LEN];
             char* token = malloc(sizeof(request));
             int token_len = sizeof(token);
             int array_index = 0;
             int request_index = 0;
-            while(request[i] != '\r' && array_index<REQUEST_ARRAY_LEN){
+            while(request[i] != '\r' && array_index < REQUEST_ARRAY_LEN && request_index < request_length){
                 int token_index = 0;
-                while(request[request_index] != '\r' && request[request_index] != ' '){
+                while(request[request_index] != '\r' && request[request_index] != ' '&& request_index<request_length){
                     token[token_index] = request[request_index];
                     request_index++;
                     token_index++;
@@ -324,18 +344,22 @@ int main(int argc, char *argv[]){
                 array_index++;
                 request_index++;
             }
+            if(array_index != REQUEST_ARRAY_LEN)
+                malformed = true;
+			
+			//Using the array created to set the actual values
+            method = (char*) request_array[METHOD_POS];
+            filename = (char*) request_array[FILE_POS];
+            client_token = (char*) request_array[FILE_POS];
+            version = (char*) request_array[VERSION_POS];
             
-
-            method = request_array[METHOD_POS];
-            filename = request_array[FILE_POS];
-            client_token = request_array[FILE_POS];
-            version = request_array[VERSION_POS];
-            
+            //Checking for "HTTP/" for version
             if(strncasecmp(version, HTTP_START, strlen(HTTP_START)) != 0){
                 valid_request = false;
                 unimplemented_protocol = true;
             }
-
+			
+			//Checking type of method and setting bools accordingly
             if(strcmp("GET", method) == 0){
                 get = true;
             }
@@ -349,52 +373,63 @@ int main(int argc, char *argv[]){
                 }
             }
         }
-
+		
+		//Check for errors in succession based on priority
         if(malformed){
-            writeResponseToSocket(socket_connection, 400);
+            if(writeResponseToSocket(socket_connection, 400)<0)
+                printf("Error writing to socket");
         }
         else{
             if(unimplemented_protocol){
-                writeResponseToSocket(socket_connection, 501);
+                if(writeResponseToSocket(socket_connection, 501)<0)
+                    printf("Error writing to socket");
             }
             else{
                 if(unsupported_method){
-                    writeResponseToSocket(socket_connection, 405);
+                    if(writeResponseToSocket(socket_connection, 405)<0)
+                        printf("Error writing to socket");
                 }
             }
         }
-
+		
+		//If the request is valid, start doing stuff
         if(valid_request){
             if(get){
                 int path_size = strlen(filename)+strlen(root);
                 char full_path[path_size];
                 if(filename[0] != '/'){
-                    writeResponseToSocket(socket_connection, 406);
+                    if(writeResponseToSocket(socket_connection, 406)<0)
+                        printf("Error writing to socket");
                 }
                 else{
                     if(strcmp(filename, "/") == 0)
                         sprintf(full_path, "//%s/default.html", root);
                     else
                         sprintf(full_path, "//%s%s", root, filename);
-                    if(fileToSocket(socket_connection, full_path)<0)
-                        writeResponseToSocket(socket_connection, 404);
+                    if(fileToSocket(socket_connection, full_path)<0){
+                        if(writeResponseToSocket(socket_connection, 404)<0)
+                            printf("Error writing to socket");
+                    }    
                 }
             }
             else{
                 if(quit){
                     if(strcmp(server_token, client_token)==0){
-                        writeResponseToSocket(socket_connection, 200);
-                        printf("Client Auth Successful, Server Shutting Down...\n");
-                        fflush(stdout);
+                        if(writeResponseToSocket(socket_connection, 200)<0)
+                            printf("Error writing to socket");
+                        if(close (socket_connection)<0)
+                            return -1;
                         exit(0);
                     }
                     else{
-                        writeResponseToSocket(socket_connection, 403);
+                        if(writeResponseToSocket(socket_connection, 403)<0)
+                            printf("Error writing to socket");
                     }
                 }
             }
         }
     }
+    
     /* close & exit */
     if(close (socket_server)<0)
 		errexit("ERROR: Error closing socket", NULL);
