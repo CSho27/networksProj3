@@ -183,21 +183,33 @@ int fileToSocket(int sd, char* filename){
     char* response =  "HTTP/1.1 200 OK\r\n\r\n";
     
     if (write (sd, response, strlen (response)) < 0){
-       	 	errexit ("error writing message: %s", NULL); 
+       	 	errexit ("error writing response", NULL); 
     }
-    char buffer[BUFLEN];
+    unsigned char buffer[BUFLEN];
     bzero(buffer, BUFLEN);
-    
-    while(fgets(buffer, BUFLEN, file)){
-        printf("buf:%s", buffer);
-        fflush(stdout);
-        if (write (sd, buffer, BUFLEN < 0)){
-       	 	errexit ("error writing message: %s", NULL); 
-        }
+    int total = 0;
+    bool done = false;
+    while(!done){
         bzero(buffer, BUFLEN);
+        
+        int i=0;
+        int current = fgetc(file);
+        while(i<BUFLEN-1 && current > 0){
+            buffer[i] = (unsigned char) current;
+            current = fgetc(file);
+            i++;
+        }
+        buffer[i] = '\0';
+        total += i;
+        if(current < 0){
+            done = true;
+        }
+        if (write (sd, buffer, i) < 0){
+            errexit ("error writing content", NULL); 
+        }
     }
     fclose(file);
-    return 0;
+    return total;
 }
 
 
@@ -258,9 +270,6 @@ int main(int argc, char *argv[]){
 		printf("ERROR: -p flag and port # must be included\n");
 	if(!(port_present && directory_present && auth_token_present))
 		errexit("ERROR: requird flags and fields were not entered" , NULL);
-    
-	printf("%s\n", server_token);
-	fflush(stdout);
 	
 	//Now that local stuff has been processed, set up to receive and interpret request
 	
@@ -346,7 +355,8 @@ int main(int argc, char *argv[]){
 
         if(valid_request){
             if(get){
-                char full_path[strlen(filename)+strlen(root)];
+                int path_size = strlen(filename)+strlen(root);
+                char full_path[path_size];
                 if(filename[0] != '/'){
                     writeResponseToSocket(socket_connection, 406);
                 }
