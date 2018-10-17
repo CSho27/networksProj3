@@ -21,7 +21,7 @@
 #define METHOD_POS 0
 #define FILE_POS 1
 #define VERSION_POS 2
-#define REQUEST_ARRAY_LEN 4
+#define REQUEST_ARRAY_LEN 3
 #define HTTP_START "HTTP/"
 
 
@@ -181,8 +181,8 @@ int fileToSocket(int sd, char* filename){
         return -1;
     
     char* response =  "HTTP/1.1 200 OK\r\n\r\n";
-    
-    if (write (sd, response, strlen (response)) < 0){
+    int size = strlen(response);
+    if (write (sd, response, size) < 0){
        	 	errexit ("error writing response", NULL); 
     }
     unsigned char buffer[BUFLEN];
@@ -199,7 +199,6 @@ int fileToSocket(int sd, char* filename){
             current = fgetc(file);
             i++;
         }
-        buffer[i] = '\0';
         total += i;
         if(current < 0){
             done = true;
@@ -301,25 +300,34 @@ int main(int argc, char *argv[]){
             valid_request = false;
         }
         else{
+            printf("%s\n", request);
+            fflush(stdout);
             char* request_array[REQUEST_ARRAY_LEN];
-            char* token = strtok(request, " ");
-            i = 0;
-
-            while (token[0] != '\r' && token !=NULL && i<3){
-               request_array[i] = token;
-               token = strtok(NULL, " ");
-               i++;
+            char* token = malloc(sizeof(request));
+            int token_len = sizeof(token);
+            int array_index = 0;
+            int request_index = 0;
+            while(request[i] != '\r' && array_index<REQUEST_ARRAY_LEN){
+                int token_index = 0;
+                while(request[request_index] != '\r' && request[request_index] != ' '){
+                    token[token_index] = request[request_index];
+                    request_index++;
+                    token_index++;
+                }
+                token[token_index] = '\0';
+                request_array[array_index] = malloc(sizeof(token));
+                sprintf(request_array[array_index], "%s", token);
+                bzero(token, token_len);
+                array_index++;
+                request_index++;
             }
-            if(i!=3){
-                malformed = true;
-                valid_request = false;
-            }
+            
 
             method = request_array[METHOD_POS];
             filename = request_array[FILE_POS];
             client_token = request_array[FILE_POS];
             version = request_array[VERSION_POS];
-
+            
             if(strncasecmp(version, HTTP_START, strlen(HTTP_START)) != 0){
                 valid_request = false;
                 unimplemented_protocol = true;
@@ -365,8 +373,6 @@ int main(int argc, char *argv[]){
                         sprintf(full_path, "//%s/default.html", root);
                     else
                         sprintf(full_path, "//%s%s", root, filename);
-                    printf("%s\n", full_path);
-                    fflush(stdout);
                     if(fileToSocket(socket_connection, full_path)<0)
                         writeResponseToSocket(socket_connection, 404);
                 }
