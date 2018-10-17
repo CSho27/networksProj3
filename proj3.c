@@ -188,11 +188,10 @@ int fileToSocket(int sd, char* filename){
     unsigned char buffer[BUFLEN];
     bzero(buffer, BUFLEN);
     int total = 0;
-    bool done = false;
-    while(!done){
+    int i=1;
+    while(i>0){
         bzero(buffer, BUFLEN);
-        
-        int i=0;
+        i=0;
         int current = fgetc(file);
         while(i<BUFLEN-1 && current > 0){
             buffer[i] = (unsigned char) current;
@@ -200,12 +199,12 @@ int fileToSocket(int sd, char* filename){
             i++;
         }
         total += i;
-        if(current < 0){
-            done = true;
-        }
         if (write (sd, buffer, i) < 0){
             errexit ("error writing content", NULL); 
         }
+    }
+    if(close(sd)<0){
+        errexit("ERROR: Error closing socket", NULL);
     }
     fclose(file);
     return total;
@@ -287,6 +286,10 @@ int main(int argc, char *argv[]){
     bool done = false;
     
     while(!done){
+        //reset booleans
+        get = false;
+        quit = false;
+        
 	    int socket_connection = setupConnection(socket_server);
         
         char* request = readRequestFromSocket(socket_connection);
