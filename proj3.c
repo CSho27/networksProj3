@@ -116,7 +116,7 @@ char* readRequestFromSocket(int sd){
 		return "invalid";
 	
 	//Reading it in by line to check format. However, it only returna first line
-	char line[sizeof(buffer)];
+	char line[BUFLEN];
 	char* return_value = malloc(ret);
 	int buffer_index = 0;
 	int line_index = 0;
@@ -324,8 +324,6 @@ int main(int argc, char *argv[]){
             valid_request = false;
         }
         else{
-            printf("%s %d\n", request, request_length);
-            fflush(stdout);
             request[request_length] = '\0';
             char* request_array[REQUEST_ARRAY_LEN];
             char* token = malloc(request_length);
@@ -334,8 +332,6 @@ int main(int argc, char *argv[]){
            
             while(request[i] != '\r' && array_index < REQUEST_ARRAY_LEN && request_index < request_length){
                 int token_index = 0;
-                 printf("here");
-                 fflush(stdout);
                 while(request[request_index] != '\r' && request[request_index] != ' ' && request_index<request_length){
                     token[token_index] = request[request_index];
                     request_index++;
@@ -343,8 +339,7 @@ int main(int argc, char *argv[]){
                 }
                 if(token_index>0){
                     token[token_index] = '\0';
-                    printf("%d %s\n",array_index, token);
-                    fflush(stdout);
+                    request_array[array_index] = malloc(sizeof(token));
                     sprintf(request_array[array_index], "%s", token);
                     bzero(token, request_length);
                     array_index++;
@@ -359,9 +354,6 @@ int main(int argc, char *argv[]){
             filename = (char*) request_array[FILE_POS];
             client_token = (char*) request_array[FILE_POS];
             version = (char*) request_array[VERSION_POS];
-            
-            printf("%s\n", version);
-            fflush(stdout);
             
             //Checking for "HTTP/" for version
             if(strncasecmp(version, HTTP_START, strlen(HTTP_START)) != 0){
