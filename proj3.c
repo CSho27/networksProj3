@@ -339,7 +339,7 @@ int main(int argc, char *argv[]){
                 }
                 if(token_index>0){
                     token[token_index] = '\0';
-                    request_array[array_index] = malloc(sizeof(token));
+                    request_array[array_index] = malloc(strlen(token)+1);
                     sprintf(request_array[array_index], "%s", token);
                     bzero(token, request_length);
                     array_index++;
