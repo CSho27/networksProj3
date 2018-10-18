@@ -1,8 +1,10 @@
 //Chris Shorter
 //cws68
-//proj3
+//proj3.c
+//10/17/18
 
-//This is the main file for project three
+
+//This is the main file for project three and it's a webserver that makes available files from a specific directory
 
 #include <stdio.h>
 #include <string.h>
