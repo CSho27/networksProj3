@@ -199,7 +199,7 @@ int fileToSocket(int sd, char* filename){
         current = 0;
         bzero(buffer, BUFLEN);
         current = fread(buffer, 1, BUFLEN, file);
-        if (write (sd, buffer, BUFLEN) < 0)
+        if (write (sd, buffer, current) < 0)
             return -1;
     }
     if(close(sd)<0)
