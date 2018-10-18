@@ -429,4 +429,5 @@ int main(int argc, char *argv[]){
     /* close & exit */
     if(close (socket_server)<0)
 		errexit("ERROR: Error closing socket", NULL);
+    return 0;
 }
